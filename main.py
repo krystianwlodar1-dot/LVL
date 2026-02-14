@@ -52,6 +52,15 @@ def get_character_info(nick):
     except:
         outfit_img = None
 
+    # status online/offline
+    online_status = False
+    try:
+        online_span = div.find("span", class_="text-success")
+        if online_span:
+            online_status = True
+    except:
+        online_status = False
+
     # HP / MP
     progress_bars = soup.find_all("div", class_="progress-bar")
     hp, mp, mp_bonus = None, None, None
@@ -116,7 +125,8 @@ def get_character_info(nick):
         "guild": guild,
         "build_points": build_points,
         "last_login": last_login,
-        "last_death": last_death
+        "last_death": last_death,
+        "online": online_status
     }
 
 # --- komendy Discord ---
@@ -159,21 +169,24 @@ async def char(ctx, nick):
     else:
         mp_text = "Brak"
 
-    # Opis z dodatkowymi informacjami
+    # kolor embed w zależności od statusu
+    color = discord.Color.green() if info.get("online") else discord.Color.red()
+
+    # opis z pogrubieniami
     description = (
-        f"{info['desc']}\n\n"
-        f"HP: {hp_text} / MP: {mp_text}\n"
-        f"Domek: {info['house']}\n"
-        f"Gildia: {info['guild']}\n"
-        f"Build Points: {info['build_points']}\n"
-        f"Ostatnie logowanie: {info['last_login']}\n"
-        f"Ostatni zgon: {info['last_death']}"
+        f"**{info['desc']}**\n\n"
+        f"**HP:** {hp_text} / **MP:** {mp_text}\n"
+        f"**Domek:** {info['house']}\n"
+        f"**Gildia:** {info['guild']}\n"
+        f"**Build Points:** {info['build_points']}\n"
+        f"**Ostatnie logowanie:** {info['last_login']}\n"
+        f"**Ostatni zgon:** {info['last_death']}"
     )
 
     embed = discord.Embed(
         title=f"{info['nick']} (Lvl {info['lvl']})",
         description=description,
-        color=discord.Color.green()
+        color=color
     )
 
     # Outfit / obrazek
