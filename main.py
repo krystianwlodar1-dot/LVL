@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 
 # =========================
-# TOKEN i konfiguracja
+# KONFIGURACJA
 # =========================
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = "data.json"
@@ -39,10 +39,7 @@ def load_players():
         return [line.strip() for line in f if line.strip()]
 
 def truncate(text, limit=70):
-    """Przycinanie długich tekstów do limitu znaków"""
-    if len(text) > limit:
-        return text[:limit-3] + "..."
-    return text
+    return text[:limit-3] + "..." if len(text) > limit else text
 
 async def fetch_character(nick):
     url = f"https://cyleria.pl/?subtopic=characters&name={quote_plus(nick)}"
@@ -50,79 +47,77 @@ async def fetch_character(nick):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=15) as resp:
                 html = await resp.text()
-    except Exception as e:
-        print(f"⚠️ Błąd pobierania postaci {nick}: {e}")
+    except:
         return None
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # Szukamy nicka i statusu online/offline
-    player_div = soup.find("h5", class_="js-player-name")
-    if not player_div:
+    # ====== ONLINE ======
+    name_div = soup.find("h5", class_="js-player-name")
+    if not name_div:
         return None
-    online = "text-success" in player_div.get("class", [])
-    name = player_div.text.strip()
+    online = "text-success" in name_div.get("class", [])
 
-    # Pobieramy level
-    level_span = player_div.find_next_sibling("span")
-    level = 0
-    if level_span:
+    # ====== LEVEL ======
+    try:
+        level_span = name_div.find_next_sibling("span")
+        level = int(level_span.text.strip().replace("(", "").replace("lvl)", "").strip())
+    except:
+        level = 0
+
+    # ====== HP / MP ======
+    try:
+        progress_bars = soup.select("div.progress-bar")
+        hp = int(progress_bars[0].get_text(strip=True))
+        mp = int(progress_bars[1].get_text(strip=True).split()[0])
+    except:
+        hp = mp = 0
+
+    # ====== Outfit ======
+    try:
+        outfit_div = soup.select_one("div.outfit-sprite")
+        outfit_url = outfit_div["data-url"] if outfit_div else None
+    except:
+        outfit_url = None
+
+    # ====== Domek / Gildia / Build Points / Logowanie ======
+    info_dict = {}
+    for li in soup.select("li.list-group-item.d-flex.justify-content-between"):
+        key_span = li.find("span")
+        strong = li.find("strong")
+        if key_span and strong:
+            key = key_span.text.strip().lower()
+            info_dict[key] = strong.get_text(strip=True)
+
+    domek = info_dict.get("domek", "Brak")
+    gildia = info_dict.get("gildia", "Brak")
+    build_points = info_dict.get("build points", "Brak")
+    logowanie = info_dict.get("logowanie", "Brak")
+
+    # ====== OSTATNI ZGON ======
+    last_death = "Brak"
+    deaths_section = soup.select("div.list-group-item.d-flex.flex-column.align-items-left.text-left")
+    if deaths_section:
+        first_death = deaths_section[0]
         try:
-            level = int(level_span.text.strip().split()[0])
+            date = first_death.find("small", class_="text-muted").text.strip()
+            desc = first_death.find("div").text.strip()
+            last_death = f"{date} – {desc}"
         except:
             pass
 
-    # HP / MP
-    card_body = soup.find("div", class_="card-body")
-    hp, mp, outfit_url = 0, 0, None
-    if card_body:
-        bars = card_body.find_all("div", class_="progress-bar")
-        if len(bars) >= 2:
-            try:
-                hp = int(bars[0].text.strip())
-                mp = int(bars[1].text.strip().split()[0])
-            except:
-                pass
-        outfit_div = card_body.find("div", class_="outfit-sprite")
-        if outfit_div:
-            style = outfit_div.get("style", "")
-            if "background-image" in style:
-                outfit_url = style.split("url('")[1].split("')")[0]
-
-    # Domek, Gildia, Build Points, Logowanie
-    domek, gildia, build_points, logowanie = "Brak", "Brak", "Brak", "Brak"
-    list_items = soup.find_all("li", class_="list-group-item")
-    for li in list_items:
-        text = li.get_text(separator=" ", strip=True)
-        if "Domek:" in text:
-            domek = truncate(li.find("strong").text.strip())
-        elif "Gildia:" in text:
-            gildia = truncate(li.find("strong").text.strip())
-        elif "Build Points:" in text:
-            build_points = truncate(li.find("strong").text.strip())
-        elif "Logowanie:" in text:
-            logowanie = truncate(li.find("strong").text.strip())
-
-    # Ostatni zgon
-    deaths_div = soup.find("div", id="deathsList")
-    last_death = "Brak"
-    if deaths_div:
-        death_items = deaths_div.find_all("div", class_="list-group-item")
-        if death_items:
-            last_death = truncate(death_items[0].get_text(separator=" ", strip=True))
-
     return {
-        "nick": name,
+        "nick": name_div.text.strip(),
         "level": level,
         "online": online,
         "hp": hp,
         "mp": mp,
+        "domek": truncate(domek),
+        "gildia": truncate(gildia),
+        "build_points": truncate(build_points),
+        "logowanie": truncate(logowanie),
+        "last_death": truncate(last_death, 100),
         "outfit_url": outfit_url,
-        "domek": domek,
-        "gildia": gildia,
-        "build_points": build_points,
-        "logowanie": logowanie,
-        "last_death": last_death,
         "url": url
     }
 
@@ -131,7 +126,7 @@ async def fetch_character(nick):
 # =========================
 @bot.command()
 async def alert(ctx, *, token=None):
-    """Ustaw token Discord w runtime jeśli nie był w ENV"""
+    """Ustaw token Discord runtime"""
     global TOKEN
     if token:
         TOKEN = token
@@ -147,12 +142,10 @@ async def char(ctx, *, nick):
         await ctx.send("❌ Postać nie istnieje.")
         return
 
-    # Tworzymy czytelny embed z HP/MP w jednej linijce i kolorami
-    embed_color = discord.Color.green() if char_data["online"] else discord.Color.red()
-    embed = discord.Embed(title=char_data["nick"], url=char_data["url"], color=embed_color)
+    color = discord.Color.green() if char_data["online"] else discord.Color.red()
+    embed = discord.Embed(title=char_data["nick"], url=char_data["url"], color=color)
     embed.add_field(name="Level", value=str(char_data["level"]), inline=True)
-    status_text = "🟢 Online" if char_data["online"] else "🔴 Offline"
-    embed.add_field(name="Status", value=status_text, inline=True)
+    embed.add_field(name="Status", value="🟢 Online" if char_data["online"] else "🔴 Offline", inline=True)
     embed.add_field(name="HP/MP", value=f"❤️ {char_data['hp']} / 💙 {char_data['mp']}", inline=True)
     embed.add_field(name="Domek", value=char_data["domek"], inline=True)
     embed.add_field(name="Gildia", value=char_data["gildia"], inline=True)
@@ -164,7 +157,7 @@ async def char(ctx, *, nick):
 
     await ctx.send(embed=embed)
 
-    # Zapis do monitorowania
+    # Zapis monitoringu
     guild_id = str(ctx.guild.id)
     if guild_id not in data:
         data[guild_id] = {}
@@ -188,7 +181,7 @@ async def stopchar(ctx, *, nick):
         await ctx.send("❌ Postać nie była monitorowana.")
 
 # =========================
-# ALERTY LVL I ZGONÓW
+# ALERTY
 # =========================
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def check_levels():
@@ -208,7 +201,6 @@ async def check_levels():
             if not char_data:
                 continue
 
-            # Alert lvl co 100
             old_lvl = info.get("last_level", 0)
             new_lvl = char_data["level"]
             if new_lvl // 100 > old_lvl // 100:
@@ -220,7 +212,6 @@ async def check_levels():
                     )
                     await channel.send(embed=embed)
 
-            # Alert zgonu
             old_death = info.get("last_death", "Brak")
             new_death = char_data["last_death"]
             if new_death != "Brak" and new_death != old_death:
@@ -256,4 +247,4 @@ async def on_ready():
 if TOKEN:
     bot.run(TOKEN)
 else:
-    print("❌ Token nie ustawiony w ENV. Użyj komendy !alert <token> w Discordzie, aby ustawić token runtime.")
+    print("❌ Token nie ustawiony w ENV. Użyj komendy !alert <token> w Discordzie.")
