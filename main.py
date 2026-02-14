@@ -80,19 +80,24 @@ async def fetch_character(nick):
     except:
         outfit_url = None
 
-    # ====== Domek / Gildia / Build Points / Logowanie ======
-    info_dict = {}
-    for li in soup.select("li.list-group-item.d-flex.justify-content-between"):
-        key_span = li.find("span")
-        strong = li.find("strong")
-        if key_span and strong:
+    # ====== Domek / Gildia / Build Points / Logowanie (z card mb-3) ======
+    domek = gildia = build_points = logowanie = "Brak"
+    card = soup.select_one("div.card.mb-3")
+    if card:
+        for li in card.select("li.list-group-item.d-flex.justify-content-between"):
+            key_span = li.find("span")
+            strong = li.find("strong")
+            if not key_span or not strong:
+                continue
             key = key_span.text.strip().lower()
-            info_dict[key] = strong.get_text(strip=True)
-
-    domek = info_dict.get("domek", "Brak")
-    gildia = info_dict.get("gildia", "Brak")
-    build_points = info_dict.get("build points", "Brak")
-    logowanie = info_dict.get("logowanie", "Brak")
+            if "domek" in key:
+                domek = truncate(strong.get_text(strip=True))
+            elif "gildia" in key:
+                gildia = truncate(strong.get_text(strip=True))
+            elif "build points" in key:
+                build_points = truncate(strong.get_text(strip=True))
+            elif "logowanie" in key:
+                logowanie = truncate(strong.get_text(strip=True))
 
     # ====== OSTATNI ZGON ======
     last_death = "Brak"
@@ -112,10 +117,10 @@ async def fetch_character(nick):
         "online": online,
         "hp": hp,
         "mp": mp,
-        "domek": truncate(domek),
-        "gildia": truncate(gildia),
-        "build_points": truncate(build_points),
-        "logowanie": truncate(logowanie),
+        "domek": domek,
+        "gildia": gildia,
+        "build_points": build_points,
+        "logowanie": logowanie,
         "last_death": truncate(last_death, 100),
         "outfit_url": outfit_url,
         "url": url
