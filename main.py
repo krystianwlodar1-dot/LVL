@@ -78,7 +78,6 @@ def get_character_info(nick):
             if img:
                 name = img.get("alt")
                 src = img.get("src")
-                # rarity wg class div
                 parent_div = td.find("div")
                 rarity_class = parent_div.get("class", [])
                 if "unique-item" in rarity_class:
@@ -110,7 +109,7 @@ async def on_ready():
 async def info(ctx):
     await ctx.send(
         "**Komendy:**\n"
-        "`!char NICK` – sprawdza poziom i pełne info\n"
+        "`!char NICK` – pełne info o postaci\n"
         "`!lista` – lista graczy\n"
         "`!info` – pokazuje pomoc"
     )
@@ -145,16 +144,23 @@ async def char(ctx, nick):
             mp_text += f" (+{info['mp_bonus']} bonus)"
         embed.add_field(name="MP", value=mp_text)
 
-    # Outfit / obrazek
+    # Outfit / avatar
     if info["outfit_img"]:
         embed.set_thumbnail(url=info["outfit_img"])
 
-    # Ekwipunek
+    # Ekwipunek graficzny
     if info["equipment"]:
-        equip_text = ""
-        for e in info["equipment"]:
-            equip_text += f"[{e['name']}]({e['img']}) – {e['rarity']}\n"
-        embed.add_field(name="Ekwipunek", value=equip_text, inline=False)
+        # Tworzymy "grid" miniaturek po 5 w linii
+        equip_lines = []
+        line = ""
+        for i, e in enumerate(info["equipment"], 1):
+            line += f"[‎]({e['img']})"  # invisible char przed linkiem, żeby pokazać obrazek
+            if i % 5 == 0:
+                equip_lines.append(line)
+                line = ""
+        if line:
+            equip_lines.append(line)
+        embed.add_field(name="Ekwipunek", value="\n".join(equip_lines), inline=False)
 
     await ctx.send(embed=embed)
 
