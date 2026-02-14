@@ -139,7 +139,7 @@ async def on_ready():
 async def info(ctx):
     await ctx.send(
         "**Komendy:**\n"
-        "`!char NICK` – sprawdza poziom i pełne info\n"
+        '`!char "NICK"` – sprawdza poziom i pełne info\n'
         "`!lista` – lista graczy\n"
         "`!info` – pokazuje pomoc"
     )
@@ -154,7 +154,8 @@ async def lista(ctx):
         await ctx.send("Brak pliku players.txt")
 
 @bot.command()
-async def char(ctx, nick):
+async def char(ctx, *, nick):
+    nick = nick.strip('"')  # usuwa cudzysłowy
     info = get_character_info(nick)
     if not info:
         await ctx.send(f"Nie znaleziono postaci **{nick}**")
@@ -198,10 +199,12 @@ async def char(ctx, nick):
 # --- alert co 10 lvl ---
 @tasks.loop(minutes=10)
 async def check_levels():
-    channel = bot.get_channel(ALERT_CHANNEL_ID)
-    if not channel:
+    try:
+        channel = await bot.fetch_channel(ALERT_CHANNEL_ID)
+    except:
         print("Nie znaleziono kanału alertów")
         return
+
     try:
         with open("players.txt", "r") as f:
             players = [p.strip() for p in f.readlines()]
