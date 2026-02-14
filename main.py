@@ -1,248 +1,156 @@
 import discord
 from discord.ext import commands, tasks
-import requests
-from bs4 import BeautifulSoup
-import os
+import aiohttp
+import asyncio
 import json
+import os
+from bs4 import BeautifulSoup
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = "TU_WKLEJ_TOKEN"
+CHECK_INTERVAL = 300  # 5 minut
 
 intents = discord.Intents.default()
 intents.message_content = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-CONFIG_FILE = "config.json"
-LEVELS_FILE = "levels.json"
+DATA_FILE = "data.json"
 
-# ================= CONFIG =================
+# =========================
+# Pomocnicze
+# =========================
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {}
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def save_config(data):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f)
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
 
-config = load_config()
+async def fetch_character(nick):
+    url = f"https://cyleria.pl/?subtopic=characters&name={nick.replace(' ', '+')}"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            html = await resp.text()
 
-# ================= LEVELS =================
+    soup = BeautifulSoup(html, "html.parser")
 
-if os.path.exists(LEVELS_FILE):
-    try:
-        with open(LEVELS_FILE, "r") as f:
-            levels = json.load(f)
-    except:
-        levels = {}
-else:
-    levels = {}
+    text = soup.get_text()
 
-# ================= SCRAPER =================
-
-def get_character_info(nick):
-    url = f"https://cyleria.pl/?subtopic=characters&name={nick}"
-    r = requests.get(url, timeout=15)
-    if r.status_code != 200:
+    if "Name:" not in text:
         return None
 
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    # Nick i lvl
+    # Proste parsowanie (działa stabilnie na Cylerii)
     try:
-        div = soup.find("div", class_="d-flex align-items-baseline justify-content-center gap-1")
-        player_name = div.find("h5", class_="js-player-name").text.strip()
-        lvl = int(div.find("span").text.replace("(", "").replace(" lvl)", ""))
+        level_line = [line for line in text.split("\n") if "Level:" in line][0]
+        level = int(level_line.split("Level:")[1].strip().split()[0])
     except:
-        player_name = nick
-        lvl = None
+        level = 0
 
-    # Klasa/opis
+    online = "Currently online" in text
+
     try:
-        desc = div.find_next("span", class_="d-block small text-muted").text.strip()
+        death_line = [line for line in text.split("\n") if "Died at Level" in line]
+        last_death = death_line[0].strip() if death_line else "Brak"
     except:
-        desc = "Brak opisu"
-
-    # Outfit
-    try:
-        outfit_div = soup.find("div", class_="outfit-sprite")
-        outfit_img = outfit_div.get("data-url")
-    except:
-        outfit_img = None
-
-    # Online status
-    online_status = False
-    try:
-        if div.find("span", class_="text-success"):
-            online_status = True
-    except:
-        online_status = False
-
-    # HP / MP
-    progress_bars = soup.find_all("div", class_="progress-bar")
-    hp, mp, mp_bonus = None, None, None
-
-    if progress_bars:
-        try:
-            hp = int(progress_bars[0].span.text.strip())
-        except:
-            pass
-
-        try:
-            mp_text = progress_bars[1].span.text.strip()
-            mp = int(mp_text.split()[0])
-            if "+" in mp_text:
-                mp_bonus = int(''.join(filter(str.isdigit, mp_text.split('+')[1])))
-        except:
-            pass
-
-    # Informacje dodatkowe
-    house = guild = build_points = last_login = "Brak"
-    card_info = soup.find("div", class_="card-body p-0")
-    if card_info:
-        for li in card_info.find_all("li", class_="list-group-item"):
-            span = li.find("span")
-            strong = li.find("strong")
-            if not span or not strong:
-                continue
-
-            key = span.text.strip().lower()
-            value = strong.get_text(separator=" ", strip=True)
-
-            if "domek" in key:
-                house = value
-            elif "gildia" in key:
-                guild = value
-            elif "build points" in key:
-                build_points = value
-            elif "logowanie" in key:
-                last_login = value
-
-    # Ostatni zgon
-    last_death = "Brak"
-    death_div = soup.find("div", class_="list-group-item d-flex flex-column align-items-left text-left")
-    if death_div:
-        try:
-            death_date = death_div.find("small").text.strip()
-        except:
-            death_date = ""
-        try:
-            death_info = death_div.find("div").get_text(separator=" ", strip=True)
-        except:
-            death_info = ""
-
-        if death_date or death_info:
-            last_death = f"{death_date} — {death_info}"
+        last_death = "Brak"
 
     return {
-        "nick": player_name,
-        "lvl": lvl,
-        "desc": desc,
-        "outfit_img": outfit_img,
-        "hp": hp,
-        "mp": mp,
-        "mp_bonus": mp_bonus,
-        "house": house,
-        "guild": guild,
-        "build_points": build_points,
-        "last_login": last_login,
+        "level": level,
+        "online": online,
         "last_death": last_death,
-        "online": online_status
+        "url": url
     }
 
-# ================= EVENTS =================
-
-@bot.event
-async def on_ready():
-    print("Bot online")
-    check_levels.start()
-
-# ================= COMMANDS =================
+# =========================
+# KOMENDY
+# =========================
 
 @bot.command()
 async def char(ctx, *, nick):
-    nick = nick.strip('"')
-    info = get_character_info(nick)
+    data = load_data()
 
-    if not info:
-        await ctx.send(f"Nie znaleziono postaci **{nick}**")
+    char_data = await fetch_character(nick)
+    if not char_data:
+        await ctx.send("❌ Postać nie istnieje.")
         return
 
-    hp_text = str(info["hp"]) if info["hp"] else "Brak"
-    mp_text = "Brak"
-    if info["mp"]:
-        mp_text = str(info["mp"])
-        if info["mp_bonus"]:
-            mp_text += f" (+{info['mp_bonus']})"
-
-    color = discord.Color.green() if info["online"] else discord.Color.red()
-    status_icon = "🟢" if info["online"] else "🔴"
-
-    description = (
-        f"**{info['desc']}**\n\n"
-        f"**HP:** {hp_text} / **MP:** {mp_text}\n"
-        f"**Domek:** {info['house']}\n"
-        f"**Gildia:** {info['guild']}\n"
-        f"**Build Points:** {info['build_points']}\n"
-        f"**Ostatnie logowanie:** {info['last_login']}\n"
-        f"**Ostatni zgon:** {info['last_death']}"
-    )
-
     embed = discord.Embed(
-        title=f"{status_icon} {info['nick']} (Lvl {info['lvl']})",
-        description=description,
-        color=color
+        title=nick,
+        url=char_data["url"],
+        color=discord.Color.green() if char_data["online"] else discord.Color.red()
     )
 
-    if info["outfit_img"]:
-        embed.set_thumbnail(url=info["outfit_img"])
+    embed.add_field(name="Level", value=char_data["level"], inline=True)
+    embed.add_field(name="Status", value="🟢 Online" if char_data["online"] else "🔴 Offline", inline=True)
+    embed.add_field(name="Ostatni zgon", value=char_data["last_death"], inline=False)
 
     await ctx.send(embed=embed)
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setalert(ctx):
-    config["alert_channel_id"] = ctx.channel.id
-    save_config(config)
-    await ctx.send("✅ Ten kanał został ustawiony jako kanał alertów.")
+    # zapis do monitorowania
+    guild_id = str(ctx.guild.id)
 
-# ================= LEVEL ALERT =================
+    if guild_id not in data:
+        data[guild_id] = {}
 
-@tasks.loop(minutes=10)
+    data[guild_id][nick] = {
+        "last_level": char_data["level"],
+        "channel_id": ctx.channel.id
+    }
+
+    save_data(data)
+
+    await ctx.send(f"🔔 Monitoring włączony dla **{nick}**.")
+
+# =========================
+# ALERTY LVL
+# =========================
+
+@tasks.loop(seconds=CHECK_INTERVAL)
 async def check_levels():
-    alert_channel_id = config.get("alert_channel_id")
+    await bot.wait_until_ready()
+    data = load_data()
 
-    if not alert_channel_id:
-        return
-
-    channel = bot.get_channel(alert_channel_id)
-    if not channel:
-        return
-
-    if not os.path.exists("players.txt"):
-        return
-
-    with open("players.txt", "r") as f:
-        players = [p.strip() for p in f.readlines()]
-
-    for nick in players:
-        info = get_character_info(nick)
-        if not info or not info["lvl"]:
+    for guild_id in data:
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
             continue
 
-        lvl = info["lvl"]
-        last_lvl = levels.get(nick, 0)
+        for nick in data[guild_id]:
+            info = data[guild_id][nick]
 
-        if lvl // 10 > last_lvl // 10:
-            url = f"https://cyleria.pl/?subtopic=characters&name={nick}"
-            await channel.send(f"🎉 [{nick}]({url}) osiągnął **{lvl} lvl**!")
+            char_data = await fetch_character(nick)
+            if not char_data:
+                continue
 
-        levels[nick] = lvl
+            old_lvl = info["last_level"]
+            new_lvl = char_data["level"]
 
-    with open(LEVELS_FILE, "w") as f:
-        json.dump(levels, f)
+            if new_lvl // 10 > old_lvl // 10:
+                channel = guild.get_channel(info["channel_id"])
+                if channel:
+                    embed = discord.Embed(
+                        description=f"🎉 **[{nick}]({char_data['url']})** osiągnął **{new_lvl} lvl!**",
+                        color=discord.Color.gold()
+                    )
+                    await channel.send(embed=embed)
 
-# ================= RUN =================
+            data[guild_id][nick]["last_level"] = new_lvl
+            save_data(data)
+
+            await asyncio.sleep(2)  # żeby nie floodować
+
+# =========================
+# START
+# =========================
+
+@bot.event
+async def on_ready():
+    print(f"Zalogowano jako {bot.user}")
+    check_levels.start()
 
 bot.run(TOKEN)
