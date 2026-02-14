@@ -5,9 +5,10 @@ import asyncio
 import json
 import os
 from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
 
 # =========================
-# TOKEN z zmiennej środowiskowej
+# TOKEN z environment
 # =========================
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
@@ -15,6 +16,7 @@ if not TOKEN:
 
 CHECK_INTERVAL = 300  # 5 minut
 DATA_FILE = "data.json"
+PLAYERS_FILE = "players.txt"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -33,8 +35,14 @@ def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+def load_players():
+    if not os.path.exists(PLAYERS_FILE):
+        return []
+    with open(PLAYERS_FILE, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
 async def fetch_character(nick):
-    url = f"https://cyleria.pl/?subtopic=characters&name={nick.replace(' ', '+')}"
+    url = f"https://cyleria.pl/?subtopic=characters&name={quote_plus(nick)}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=15) as resp:
@@ -44,11 +52,14 @@ async def fetch_character(nick):
         return None
 
     soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text()
+    text = soup.get_text(separator="\n")
 
-    if "Name:" not in text:
+    # Szukamy nicka w tekście strony
+    name_line = [line.strip() for line in text.split("\n") if nick.lower() in line.lower()]
+    if not name_line:
         return None
 
+    # Level
     try:
         level_line = [line for line in text.split("\n") if "Level:" in line][0]
         level = int(level_line.split("Level:")[1].strip().split()[0])
@@ -57,6 +68,7 @@ async def fetch_character(nick):
 
     online = "Currently online" in text
 
+    # Ostatni zgon
     try:
         death_line = [line for line in text.split("\n") if "Died at Level" in line]
         last_death = death_line[0].strip() if death_line else "Brak"
@@ -91,7 +103,7 @@ async def char(ctx, *, nick):
     embed.add_field(name="Ostatni zgon", value=char_data["last_death"], inline=False)
     await ctx.send(embed=embed)
 
-    # zapis do monitorowania
+    # zapis do monitorowania per guild
     guild_id = str(ctx.guild.id)
     if guild_id not in data:
         data[guild_id] = {}
@@ -124,13 +136,19 @@ async def check_levels():
     data = load_data()
     changed = False
 
+    # Lista nicków z pliku players.txt
+    players = load_players()
+
     for guild_id in data:
         guild = bot.get_guild(int(guild_id))
         if not guild:
             continue
 
-        for nick in data[guild_id]:
-            info = data[guild_id][nick]
+        # Lista do monitorowania: z pliku + dodatkowo postacie dodane komendą !char
+        guild_nicks = set(players) | set(data[guild_id].keys())
+
+        for nick in guild_nicks:
+            info = data[guild_id].get(nick, {})
             char_data = await fetch_character(nick)
             if not char_data:
                 continue
@@ -139,7 +157,7 @@ async def check_levels():
             old_lvl = info.get("last_level", 0)
             new_lvl = char_data["level"]
             if new_lvl // 10 > old_lvl // 10:
-                channel = guild.get_channel(info["channel_id"])
+                channel = guild.get_channel(info.get("channel_id", 0))
                 if channel:
                     embed = discord.Embed(
                         description=f"🎉 **[{nick}]({char_data['url']})** osiągnął **{new_lvl} lvl!**",
@@ -151,7 +169,7 @@ async def check_levels():
             old_death = info.get("last_death", "Brak")
             new_death = char_data["last_death"]
             if new_death != "Brak" and new_death != old_death:
-                channel = guild.get_channel(info["channel_id"])
+                channel = guild.get_channel(info.get("channel_id", 0))
                 if channel:
                     embed = discord.Embed(
                         description=f"⚰️ **[{nick}]({char_data['url']})** zginął: {new_death}",
@@ -159,11 +177,14 @@ async def check_levels():
                     )
                     await channel.send(embed=embed)
 
-            # aktualizacja danych
-            data[guild_id][nick]["last_level"] = new_lvl
-            data[guild_id][nick]["last_death"] = new_death
+            # Aktualizacja danych
+            data[guild_id][nick] = {
+                "last_level": new_lvl,
+                "last_death": new_death,
+                "channel_id": info.get("channel_id", 0)  # jeśli brak, nie wyśle alertu
+            }
 
-            await asyncio.sleep(1.5)  # małe opóźnienie żeby nie floodować
+            await asyncio.sleep(1.5)  # małe opóźnienie, żeby nie floodować
 
     save_data(data)
 
