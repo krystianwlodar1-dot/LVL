@@ -6,7 +6,7 @@ import os
 import json
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-ALERT_CHANNEL_ID = 123456789012345678  # <- wpisz ID kanału dla alertów
+ALERT_CHANNEL_ID = 1472035548930637866  # <- wpisz ID kanału dla alertów
 
 intents = discord.Intents.default()
 intents.message_content = True
