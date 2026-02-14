@@ -200,7 +200,11 @@ async def char(ctx, *, nick):
 @tasks.loop(minutes=10)
 async def check_levels():
     try:
-        channel = await bot.fetch_channel(ALERT_CHANNEL_ID)
+        channel = bot.get_channel(ALERT_CHANNEL_ID)
+if not channel:
+    print("Nie znaleziono kanału alertów")
+    return
+
     except:
         print("Nie znaleziono kanału alertów")
         return
