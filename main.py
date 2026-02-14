@@ -4,24 +4,26 @@ import aiohttp
 import asyncio
 import json
 import os
-from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
+from bs4 import BeautifulSoup
 
 # =========================
 # KONFIGURACJA
 # =========================
 TOKEN = os.getenv("DISCORD_TOKEN")
-DATA_FILE = "data.json"
-PLAYERS_FILE = "players.txt"
 CHECK_INTERVAL = 300  # 5 minut
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+DATA_FILE = "data.json"
+PLAYERS_FILE = "players.txt"
+
 # =========================
 # FUNKCJE POMOCNICZE
 # =========================
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -39,7 +41,7 @@ def load_players():
         return [line.strip() for line in f if line.strip()]
 
 def truncate(text, limit=70):
-    return text[:limit-3] + "..." if len(text) > limit else text
+    return text if len(text) <= limit else text[:limit] + "..."
 
 async def fetch_character(nick):
     url = f"https://cyleria.pl/?subtopic=characters&name={quote_plus(nick)}"
@@ -47,97 +49,102 @@ async def fetch_character(nick):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=15) as resp:
                 html = await resp.text()
-    except:
+    except Exception:
         return None
 
     soup = BeautifulSoup(html, "html.parser")
-
-    # ====== ONLINE ======
-    name_div = soup.find("h5", class_="js-player-name")
-    if not name_div:
+    
+    # Sprawdzenie czy postać istnieje
+    name_tag = soup.select_one(".js-player-name")
+    if not name_tag:
         return None
-    online = "text-success" in name_div.get("class", [])
-
-    # ====== LEVEL ======
+    
+    # Level
+    lvl_tag = soup.find("span", text=lambda t: t and "lvl" in t)
     try:
-        level_span = name_div.find_next_sibling("span")
-        level = int(level_span.text.strip().replace("(", "").replace("lvl)", "").strip())
+        level = int(lvl_tag.text.strip().replace("(", "").replace(")", "").replace("lvl","").strip())
     except:
         level = 0
 
-    # ====== HP / MP ======
+    # Online/offline po kolorze nicku
+    online = "text-success" in name_tag.get("class", [])
+
+    # HP i MP
+    hp_tag = soup.select_one(".progress-bar.bg-danger span")
+    mp_tag = soup.select_one(".progress-bar.bg-primary span")
     try:
-        progress_bars = soup.select("div.progress-bar")
-        hp = int(progress_bars[0].get_text(strip=True))
-        mp = int(progress_bars[1].get_text(strip=True).split()[0])
+        hp = hp_tag.text.strip()
+        mp = mp_tag.text.strip()
     except:
-        hp = mp = 0
+        hp = mp = "Brak"
 
-    # ====== Outfit ======
+    # Outfit
+    outfit_tag = soup.select_one(".outfit-sprite")
+    outfit_url = outfit_tag["data-url"] if outfit_tag else None
+
+    # Domek
+    domek_tag = soup.find("li", string=lambda t: t and "Domek:" in t)
     try:
-        outfit_div = soup.select_one("div.outfit-sprite")
-        outfit_url = outfit_div["data-url"] if outfit_div else None
+        domek = domek_tag.strong.text.strip()
     except:
-        outfit_url = None
+        domek = "Brak"
 
-    # ====== Domek / Gildia / Build Points / Logowanie (z card mb-3) ======
-    domek = gildia = build_points = logowanie = "Brak"
-    card = soup.select_one("div.card.mb-3")
-    if card:
-        for li in card.select("li.list-group-item.d-flex.justify-content-between"):
-            key_span = li.find("span")
-            strong = li.find("strong")
-            if not key_span or not strong:
-                continue
-            key = key_span.text.strip().lower()
-            if "domek" in key:
-                domek = truncate(strong.get_text(strip=True))
-            elif "gildia" in key:
-                gildia = truncate(strong.get_text(strip=True))
-            elif "build points" in key:
-                build_points = truncate(strong.get_text(strip=True))
-            elif "logowanie" in key:
-                logowanie = truncate(strong.get_text(strip=True))
+    # Gildia
+    gildia_tag = soup.find("li", string=lambda t: t and "Gildia:" in t)
+    try:
+        gildia = gildia_tag.strong.text.strip()
+    except:
+        gildia = "Brak"
 
-    # ====== OSTATNI ZGON ======
-    last_death = "Brak"
-    deaths_section = soup.select("div.list-group-item.d-flex.flex-column.align-items-left.text-left")
-    if deaths_section:
-        first_death = deaths_section[0]
-        try:
-            date = first_death.find("small", class_="text-muted").text.strip()
-            desc = first_death.find("div").text.strip()
-            last_death = f"{date} – {desc}"
-        except:
-            pass
+    # Build Points
+    build_tag = soup.find("li", string=lambda t: t and "Build Points:" in t)
+    try:
+        build_points = build_tag.strong.get_text(" / ", strip=True)
+    except:
+        build_points = "Brak"
+
+    # Logowanie
+    login_tag = soup.find("li", string=lambda t: t and "Logowanie:" in t)
+    try:
+        last_login = login_tag.strong.text.strip()
+    except:
+        last_login = "Brak"
+
+    # Ostatni zgon
+    deaths = soup.select("div.list-group-item.d-flex.flex-column.align-items-left.text-left")
+    if deaths:
+        last_death_date = deaths[0].select_one("small").text.strip()
+        last_death_desc = deaths[0].select_one("div").text.strip()
+        last_death = f"{last_death_date} - {truncate(last_death_desc)}"
+    else:
+        last_death = "Brak"
 
     return {
-        "nick": name_div.text.strip(),
         "level": level,
         "online": online,
         "hp": hp,
         "mp": mp,
+        "outfit": outfit_url,
         "domek": domek,
         "gildia": gildia,
         "build_points": build_points,
-        "logowanie": logowanie,
-        "last_death": truncate(last_death, 100),
-        "outfit_url": outfit_url,
+        "last_login": last_login,
+        "last_death": last_death,
         "url": url
     }
 
 # =========================
 # KOMENDY
 # =========================
+
 @bot.command()
 async def alert(ctx, *, token=None):
-    """Ustaw token Discord runtime"""
     global TOKEN
     if token:
         TOKEN = token
         await ctx.send("✅ Token ustawiony.")
     else:
-        await ctx.send("❌ Podaj token po komendzie !alert <token>.")
+        await ctx.send("❌ Brak tokena.")
 
 @bot.command()
 async def char(ctx, *, nick):
@@ -147,32 +154,36 @@ async def char(ctx, *, nick):
         await ctx.send("❌ Postać nie istnieje.")
         return
 
-    color = discord.Color.green() if char_data["online"] else discord.Color.red()
-    embed = discord.Embed(title=char_data["nick"], url=char_data["url"], color=color)
-    embed.add_field(name="Level", value=str(char_data["level"]), inline=True)
+    embed = discord.Embed(
+        title=nick,
+        url=char_data["url"],
+        color=discord.Color.green() if char_data["online"] else discord.Color.red()
+    )
+
     embed.add_field(name="Status", value="🟢 Online" if char_data["online"] else "🔴 Offline", inline=True)
-    embed.add_field(name="HP/MP", value=f"❤️ {char_data['hp']} / 💙 {char_data['mp']}", inline=True)
+    embed.add_field(name="Level", value=char_data["level"], inline=True)
+    embed.add_field(name="HP / MP", value=f"❤️ {char_data['hp']} / 💙 {char_data['mp']}", inline=True)
+    if char_data["outfit"]:
+        embed.set_thumbnail(url=char_data["outfit"])
     embed.add_field(name="Domek", value=char_data["domek"], inline=True)
     embed.add_field(name="Gildia", value=char_data["gildia"], inline=True)
     embed.add_field(name="Build Points", value=char_data["build_points"], inline=True)
-    embed.add_field(name="Logowanie", value=char_data["logowanie"], inline=True)
+    embed.add_field(name="Ostatnie logowanie", value=char_data["last_login"], inline=True)
     embed.add_field(name="Ostatni zgon", value=char_data["last_death"], inline=False)
-    if char_data["outfit_url"]:
-        embed.set_thumbnail(url=char_data["outfit_url"])
 
     await ctx.send(embed=embed)
 
-    # Zapis monitoringu
     guild_id = str(ctx.guild.id)
     if guild_id not in data:
         data[guild_id] = {}
-    data[guild_id][char_data["nick"]] = {
+
+    data[guild_id][nick] = {
         "last_level": char_data["level"],
         "last_death": char_data["last_death"],
         "channel_id": ctx.channel.id
     }
     save_data(data)
-    await ctx.send(f"🔔 Monitoring włączony dla **{char_data['nick']}**.")
+    await ctx.send(f"🔔 Monitoring włączony dla **{nick}**.")
 
 @bot.command()
 async def stopchar(ctx, *, nick):
@@ -183,73 +194,81 @@ async def stopchar(ctx, *, nick):
         save_data(data)
         await ctx.send(f"🛑 Monitoring wyłączony dla **{nick}**.")
     else:
-        await ctx.send("❌ Postać nie była monitorowana.")
+        await ctx.send("❌ Postać nie jest monitorowana.")
 
 # =========================
 # ALERTY
 # =========================
+
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def check_levels():
     await bot.wait_until_ready()
     data = load_data()
-    players = load_players()
+    updated = False
 
     for guild_id in data:
         guild = bot.get_guild(int(guild_id))
         if not guild:
             continue
-        guild_nicks = set(players) | set(data[guild_id].keys())
-
-        for nick in guild_nicks:
-            info = data[guild_id].get(nick, {})
+        for nick in list(data[guild_id].keys()):
+            info = data[guild_id][nick]
             char_data = await fetch_character(nick)
             if not char_data:
                 continue
 
-            old_lvl = info.get("last_level", 0)
+            # Alert lvl co 100 lvl
+            old_lvl = info["last_level"]
             new_lvl = char_data["level"]
             if new_lvl // 100 > old_lvl // 100:
-                channel = guild.get_channel(info.get("channel_id", 0))
+                channel = guild.get_channel(info["channel_id"])
                 if channel:
                     embed = discord.Embed(
-                        description=f"🎉 **[{char_data['nick']}]({char_data['url']})** osiągnął **{new_lvl} lvl!**",
+                        description=f"🎉 **[{nick}]({char_data['url']})** osiągnął **{new_lvl} lvl!**",
                         color=discord.Color.gold()
                     )
                     await channel.send(embed=embed)
 
-            old_death = info.get("last_death", "Brak")
-            new_death = char_data["last_death"]
-            if new_death != "Brak" and new_death != old_death:
-                channel = guild.get_channel(info.get("channel_id", 0))
+            # Alert zgonu
+            if char_data["last_death"] != info.get("last_death"):
+                channel = guild.get_channel(info["channel_id"])
                 if channel:
                     embed = discord.Embed(
-                        description=f"⚰️ **[{char_data['nick']}]({char_data['url']})** zginął: {new_death}",
+                        description=f"💀 **[{nick}]({char_data['url']})** zginął!\n{char_data['last_death']}",
                         color=discord.Color.dark_red()
                     )
                     await channel.send(embed=embed)
 
-            # Aktualizacja danych
-            data[guild_id][nick] = {
-                "last_level": new_lvl,
-                "last_death": new_death,
-                "channel_id": info.get("channel_id", 0)
-            }
-            await asyncio.sleep(1.5)
+            data[guild_id][nick]["last_level"] = new_lvl
+            data[guild_id][nick]["last_death"] = char_data["last_death"]
+            updated = True
+            await asyncio.sleep(1.5)  # unikamy floodowania
 
-    save_data(data)
+    if updated:
+        save_data(data)
 
 # =========================
 # START
 # =========================
+
 @bot.event
 async def on_ready():
-    print(f"✅ Zalogowano jako {bot.user}")
+    print(f"Zalogowano jako {bot.user}")
+    # Monitorowanie graczy z players.txt
+    players = load_players()
+    guilds = bot.guilds
+    for guild in guilds:
+        guild_id = str(guild.id)
+        data = load_data()
+        if guild_id not in data:
+            data[guild_id] = {}
+        for nick in players:
+            if nick not in data[guild_id]:
+                data[guild_id][nick] = {
+                    "last_level": 0,
+                    "last_death": "Brak",
+                    "channel_id": None
+                }
+        save_data(data)
     check_levels.start()
 
-# =========================
-# URUCHOMIENIE
-# =========================
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("❌ Token nie ustawiony w ENV. Użyj komendy !alert <token> w Discordzie.")
+bot.run(TOKEN)
