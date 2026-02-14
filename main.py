@@ -53,14 +53,14 @@ async def fetch_character(nick):
         return None
 
     soup = BeautifulSoup(html, "html.parser")
-    
+
     # Sprawdzenie czy postać istnieje
     name_tag = soup.select_one(".js-player-name")
     if not name_tag:
         return None
-    
+
     # Level
-    lvl_tag = soup.find("span", text=lambda t: t and "lvl" in t)
+    lvl_tag = soup.find("span", string=lambda t: t and "lvl" in t)
     try:
         level = int(lvl_tag.text.strip().replace("(", "").replace(")", "").replace("lvl","").strip())
     except:
@@ -82,33 +82,24 @@ async def fetch_character(nick):
     outfit_tag = soup.select_one(".outfit-sprite")
     outfit_url = outfit_tag["data-url"] if outfit_tag else None
 
-    # Domek
-    domek_tag = soup.find("li", string=lambda t: t and "Domek:" in t)
-    try:
-        domek = domek_tag.strong.text.strip()
-    except:
-        domek = "Brak"
-
-    # Gildia
-    gildia_tag = soup.find("li", string=lambda t: t and "Gildia:" in t)
-    try:
-        gildia = gildia_tag.strong.text.strip()
-    except:
-        gildia = "Brak"
-
-    # Build Points
-    build_tag = soup.find("li", string=lambda t: t and "Build Points:" in t)
-    try:
-        build_points = build_tag.strong.get_text(" / ", strip=True)
-    except:
-        build_points = "Brak"
-
-    # Logowanie
-    login_tag = soup.find("li", string=lambda t: t and "Logowanie:" in t)
-    try:
-        last_login = login_tag.strong.text.strip()
-    except:
-        last_login = "Brak"
+    # Lista <li> z danymi
+    li_tags = soup.select(".list-group-item.d-flex.justify-content-between")
+    domek = gildia = build_points = last_login = "Brak"
+    for li in li_tags:
+        span = li.find("span")
+        strong = li.find("strong")
+        if not span or not strong:
+            continue
+        label = span.text.strip()
+        value = strong.get_text(" / ", strip=True)
+        if label == "Domek:":
+            domek = value
+        elif label == "Gildia:":
+            gildia = value
+        elif label == "Build Points:":
+            build_points = value
+        elif label == "Logowanie:":
+            last_login = value
 
     # Ostatni zgon
     deaths = soup.select("div.list-group-item.d-flex.flex-column.align-items-left.text-left")
@@ -255,8 +246,7 @@ async def on_ready():
     print(f"Zalogowano jako {bot.user}")
     # Monitorowanie graczy z players.txt
     players = load_players()
-    guilds = bot.guilds
-    for guild in guilds:
+    for guild in bot.guilds:
         guild_id = str(guild.id)
         data = load_data()
         if guild_id not in data:
