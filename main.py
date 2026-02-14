@@ -39,20 +39,20 @@ def get_character_info(nick):
         player_name = nick
         lvl = None
 
-    # klasa / opis
+    # opis / klasa
     try:
         desc = div.find_next("span", class_="d-block small text-muted").text.strip()
     except:
         desc = "Brak opisu"
 
-    # obrazek postaci (outfit)
+    # obrazek outfit
     try:
         outfit_div = soup.find("div", class_="outfit-sprite")
         outfit_img = outfit_div.get("data-url")
     except:
         outfit_img = None
 
-    # progress bars (HP i MP)
+    # HP / MP
     progress_bars = soup.find_all("div", class_="progress-bar")
     hp, mp, mp_bonus = None, None, None
     if progress_bars:
@@ -69,24 +69,40 @@ def get_character_info(nick):
             mp = None
             mp_bonus = None
 
-    # ekwipunek
-    equipment = []
-    table = soup.find("table")
-    if table:
-        for td in table.find_all("td"):
-            img = td.find("img")
-            if img:
-                name = img.get("alt")
-                src = img.get("src")
-                parent_div = td.find("div")
-                rarity_class = parent_div.get("class", [])
-                if "unique-item" in rarity_class:
-                    rarity = "Unique"
-                elif "rare-item" in rarity_class:
-                    rarity = "Rare"
-                else:
-                    rarity = "Normal"
-                equipment.append({"name": name, "img": src, "rarity": rarity})
+    # dodatkowe informacje z karty
+    card_info = soup.find("div", class_="card-body p-0")
+    house = guild = build_points = last_login = "Brak"
+    if card_info:
+        for li in card_info.find_all("li", class_="list-group-item"):
+            span = li.find("span")
+            strong = li.find("strong")
+            if not span or not strong:
+                continue
+            key = span.text.strip().lower()
+            value = strong.get_text(separator=" ", strip=True)
+            if "domek" in key:
+                house = value
+            elif "gildia" in key:
+                guild = value
+            elif "build points" in key:
+                build_points = value
+            elif "logowanie" in key:
+                last_login = value
+
+    # ostatni zgon
+    last_death = "Brak"
+    death_div = soup.find("div", class_="list-group-item d-flex flex-column align-items-left text-left")
+    if death_div:
+        try:
+            death_date = death_div.find("small").text.strip()
+        except:
+            death_date = ""
+        try:
+            death_info = death_div.find("div").get_text(separator=" ", strip=True)
+        except:
+            death_info = ""
+        if death_date or death_info:
+            last_death = f"{death_date} — {death_info}"
 
     return {
         "nick": player_name,
@@ -96,7 +112,11 @@ def get_character_info(nick):
         "hp": hp,
         "mp": mp,
         "mp_bonus": mp_bonus,
-        "equipment": equipment
+        "house": house,
+        "guild": guild,
+        "build_points": build_points,
+        "last_login": last_login,
+        "last_death": last_death
     }
 
 # --- komendy Discord ---
@@ -109,7 +129,7 @@ async def on_ready():
 async def info(ctx):
     await ctx.send(
         "**Komendy:**\n"
-        "`!char NICK` – pełne info o postaci\n"
+        "`!char NICK` – sprawdza poziom i pełne info\n"
         "`!lista` – lista graczy\n"
         "`!info` – pokazuje pomoc"
     )
@@ -130,37 +150,35 @@ async def char(ctx, nick):
         await ctx.send(f"Nie znaleziono postaci **{nick}**")
         return
 
+    # HP / MP w jednej linijce
+    hp_text = str(info["hp"]) if info["hp"] is not None else "Brak"
+    if info["mp"] is not None:
+        mp_text = str(info["mp"])
+        if info.get("mp_bonus"):
+            mp_text += f" (+{info['mp_bonus']})"
+    else:
+        mp_text = "Brak"
+
+    # Opis z dodatkowymi informacjami
+    description = (
+        f"{info['desc']}\n\n"
+        f"HP: {hp_text} / MP: {mp_text}\n"
+        f"Domek: {info['house']}\n"
+        f"Gildia: {info['guild']}\n"
+        f"Build Points: {info['build_points']}\n"
+        f"Ostatnie logowanie: {info['last_login']}\n"
+        f"Ostatni zgon: {info['last_death']}"
+    )
+
     embed = discord.Embed(
         title=f"{info['nick']} (Lvl {info['lvl']})",
-        description=info['desc'],
+        description=description,
         color=discord.Color.green()
     )
 
-    # HP / MP
-    if info["hp"]: embed.add_field(name="HP", value=info["hp"])
-    if info["mp"]:
-        mp_text = f"{info['mp']}"
-        if info["mp_bonus"]:
-            mp_text += f" (+{info['mp_bonus']} bonus)"
-        embed.add_field(name="MP", value=mp_text)
-
-    # Outfit / avatar
+    # Outfit / obrazek
     if info["outfit_img"]:
         embed.set_thumbnail(url=info["outfit_img"])
-
-    # Ekwipunek graficzny
-    if info["equipment"]:
-        # Tworzymy "grid" miniaturek po 5 w linii
-        equip_lines = []
-        line = ""
-        for i, e in enumerate(info["equipment"], 1):
-            line += f"[‎]({e['img']})"  # invisible char przed linkiem, żeby pokazać obrazek
-            if i % 5 == 0:
-                equip_lines.append(line)
-                line = ""
-        if line:
-            equip_lines.append(line)
-        embed.add_field(name="Ekwipunek", value="\n".join(equip_lines), inline=False)
 
     await ctx.send(embed=embed)
 
@@ -185,7 +203,8 @@ async def check_levels():
         lvl = info["lvl"]
         last_lvl = levels.get(nick, 0)
         if lvl // 10 > last_lvl // 10:
-            await channel.send(f"🎉 **{nick}** osiągnął **{lvl} lvl**!")
+            url = f"https://cyleria.pl/?subtopic=characters&name={nick}"
+            await channel.send(f"🎉 [{nick}]({url}) osiągnął **{lvl} lvl**!")
         levels[nick] = lvl
 
     with open("levels.json", "w") as f:
