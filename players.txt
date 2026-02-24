@@ -1,11 +1,19 @@
-Agnieszka
-Gazowany Kompor
-Miekka Parowka
-Negocjator
-Negocjatorka
-Mistrz Negocjacji
-Astma
-Jestem Karma
-Pan Trezer
-Tapczan'ed
-Trimui
+[
+  "Agnieszka",
+  "Miekka Parowka",
+  "Gazowany Kompot",
+  "Negocjator",
+  "Astma",
+  "Mistrz Negocjacji",
+  "Jestem Karma",
+  "Pan Trezer",
+  "Tapczan'ed",
+  "Corcia Tatulcia",  
+  "Trimui",
+  "Inspekcja",
+  "Smart Pro",
+  "Smart Propo",
+  "Smart Lite",
+  "Smart Lited",
+  "Interested"
+]
